@@ -352,3 +352,13 @@ For questions, suggestions, or support requests, please refer to the project rep
 SmartCommute aims to make urban transit easier, safer, and more informed. By combining multiple data sources into one intuitive interface, we help commuters make better decisions about their daily journeys. Whether you're avoiding rain, planning around air quality, or simply finding the fastest route, SmartCommute has you covered.
 
 Thank you for using SmartCommute. Safe travels!
+
+
+
+Now the Line status is added along with weather of more cities is also added, 
+Now to run the webpage you need to run the backend 
+in cmd
+cd <address/path for the two files>
+python backend_v2.py //python should be already installed.
+This two lines will make it run in your system's localhost.
+
