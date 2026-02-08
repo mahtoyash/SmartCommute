@@ -1,8 +1,4 @@
 #!/usr/bin/env python3
-"""
-BART API Proxy Server - With Real Weather & Forecast Data
-Uses Open-Meteo for weather and forecasts
-"""
 
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 import json
