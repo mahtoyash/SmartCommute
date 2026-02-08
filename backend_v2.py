@@ -127,6 +127,8 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
     }
     
     # TfL API Configuration
+    # Note: TfL Unified API is now open access (no API key required)
+    # Just need proper User-Agent headers
     TFL_BASE_URL = 'https://api.tfl.gov.uk'
     
     # Station data
@@ -225,8 +227,10 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
     def get_weather_forecast(cls, city_name, days=7):
         """Fetch weather forecast from Open-Meteo API"""
         try:
+            # Get coordinates for the city
             lat, lon = cls.CITY_COORDS.get(city_name, (37.7749, -122.4194))
             
+            # Open-Meteo Forecast API
             forecast_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,surface_pressure,visibility&daily=temperature_2m_max,temperature_2m_min,weather_code,precipitation_probability_max,wind_speed_10m_max&temperature_unit=celsius&wind_speed_unit=kmh&forecast_days={days}"
             
             ssl_context = ssl._create_unverified_context()
@@ -238,6 +242,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             current = data.get('current', {})
             daily = data.get('daily', {})
             
+            # Current weather
             weather_code = current.get('weather_code', 0)
             condition, icon = cls.map_weather_code(weather_code)
             
@@ -247,10 +252,11 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                 'icon': icon,
                 'humidity': int(current.get('relative_humidity_2m', 65)),
                 'windSpeed': round(current.get('wind_speed_10m', 10), 1),
-                'visibility': round(current.get('visibility', 10000) / 1000, 1),
+                'visibility': round(current.get('visibility', 10000) / 1000, 1),  # Convert m to km
                 'pressure': int(current.get('surface_pressure', 1013))
             }
             
+            # Daily forecast
             forecast = []
             times = daily.get('time', [])
             max_temps = daily.get('temperature_2m_max', [])
@@ -318,18 +324,21 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
     @classmethod
     def get_weather_data(cls, station_code):
         """Fetch real weather data from Open-Meteo API"""
+        # Check cache (cache for 10 minutes)
         cache_key = station_code
         if cache_key in cls.weather_cache:
             cache_age = (datetime.now() - cls.weather_cache_time[cache_key]).total_seconds()
-            if cache_age < 600:
+            if cache_age < 600:  # 10 minutes
                 return cls.weather_cache[cache_key]
         
         try:
+            # Get coordinates for this station
             if station_code not in cls.STATION_COORDS:
-                station_code = '12TH'
+                station_code = '12TH'  # Default fallback
             
             lat, lon = cls.STATION_COORDS[station_code]
             
+            # Open-Meteo API (free, no key needed)
             weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,surface_pressure,visibility&temperature_unit=celsius&wind_speed_unit=kmh"
             
             ssl_context = ssl._create_unverified_context()
@@ -340,6 +349,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             
             current = data.get('current', {})
             
+            # Map weather code to condition and icon
             weather_code = current.get('weather_code', 0)
             condition, icon = cls.map_weather_code(weather_code)
             
@@ -349,13 +359,15 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                 'icon': icon,
                 'humidity': int(current.get('relative_humidity_2m', 65)),
                 'windSpeed': round(current.get('wind_speed_10m', 10), 1),
-                'visibility': round(current.get('visibility', 10000) / 1000, 1),
+                'visibility': round(current.get('visibility', 10000) / 1000, 1),  # Convert m to km
                 'pressure': int(current.get('surface_pressure', 1013))
             }
             
+            # Get real AQI data from Open-Meteo Air Quality API
             aqi_data = cls.get_real_aqi(lat, lon)
             weather_data.update(aqi_data)
             
+            # Cache the result
             cls.weather_cache[cache_key] = weather_data
             cls.weather_cache_time[cache_key] = datetime.now()
             
@@ -365,12 +377,14 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             
         except Exception as e:
             print(f"   ⚠️  Weather API error: {e}")
+            # Return fallback data
             return cls.get_fallback_weather()
     
     @classmethod
     def get_real_aqi(cls, lat, lon):
         """Fetch real AQI data from Open-Meteo Air Quality API"""
         try:
+            # Open-Meteo Air Quality API - provides US AQI and pollutant data
             aqi_url = f"https://air-quality-api.open-meteo.com/v1/air-quality?latitude={lat}&longitude={lon}&current=us_aqi,pm10,pm2_5"
             
             ssl_context = ssl._create_unverified_context()
@@ -381,10 +395,13 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             
             current = data.get('current', {})
             
+            # Get US AQI (most commonly used standard)
             aqi_value = current.get('us_aqi')
             
+            # If US AQI is not available, calculate from PM2.5
             if aqi_value is None or aqi_value == 0:
                 pm25 = current.get('pm2_5', 10)
+                # Convert PM2.5 to AQI using EPA formula (simplified)
                 if pm25 <= 12.0:
                     aqi_value = int((50 / 12.0) * pm25)
                 elif pm25 <= 35.4:
@@ -398,8 +415,10 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             else:
                 aqi_value = int(aqi_value)
             
+            # Ensure AQI is within valid range
             aqi_value = max(0, min(500, aqi_value))
             
+            # Map AQI to level, color, and icon
             aqi_level, aqi_color, aqi_icon = cls.map_aqi(aqi_value)
             
             print(f"   🌫️  Real AQI: {aqi_value} ({aqi_level})")
@@ -413,7 +432,8 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             
         except Exception as e:
             print(f"   ⚠️  AQI API error: {e}")
-            aqi_value = 50
+            # Return fallback AQI
+            aqi_value = 50  # Default to "Good"
             aqi_level, aqi_color, aqi_icon = cls.map_aqi(aqi_value)
             return {
                 'aqi': aqi_value,
@@ -441,6 +461,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
     @classmethod
     def map_weather_code(cls, code):
         """Map WMO weather code to condition and emoji"""
+        # WMO Weather interpretation codes
         if code == 0:
             return 'Clear Sky', '☀️'
         elif code in [1, 2]:
@@ -502,7 +523,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                         'id': f"{station_code}_{dest_abbr}_{i}",
                         'destination': dest_name,
                         'abbreviation': dest_abbr,
-                        'destination_code': dest_abbr,
+                        'destination_code': dest_abbr,  # For weather lookup
                         'direction': dest_direction,
                         'color': color,
                         'hexcolor': hexcolor,
@@ -540,6 +561,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                 dest_key = train['abbreviation']
                 
                 if dest_key not in current_arrivals:
+                    # Fetch weather for destination
                     weather_data = cls.get_weather_data(train['destination_code'])
                     
                     current_arrivals[dest_key] = {
@@ -605,6 +627,8 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             station_info = self.LONDON_STATIONS.get(station_id, {'name': 'Unknown', 'lat': 51.5074, 'lon': -0.1278})
             station_name = station_info['name']
             
+            # Fetch live arrivals from TfL API
+            # Note: TfL API now requires app_id instead of app_key
             arrivals_url = f"{self.TFL_BASE_URL}/StopPoint/{station_id}/Arrivals"
             
             print(f"\n{'='*60}")
@@ -614,17 +638,20 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             
             ssl_context = ssl._create_unverified_context()
             request = urllib.request.Request(arrivals_url)
+            # Add User-Agent header to avoid 403 errors
             request.add_header('User-Agent', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36')
             
             with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
                 arrivals_data = json.loads(response.read().decode())
             
+            # Get weather for station
             weather_data = BARTProxyHandler.get_weather_data_by_coords(
                 station_info['lat'], 
                 station_info['lon'],
                 station_name
             )
             
+            # Process arrivals
             trains = []
             seen_destinations = {}
             
@@ -635,10 +662,13 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                 time_to_station = arrival.get('timeToStation', 0)
                 current_location = arrival.get('currentLocation', '')
                 
+                # Convert seconds to minutes
                 minutes = int(time_to_station / 60)
                 
+                # Get line color
                 line_color = BARTProxyHandler.get_tube_line_color(line_name)
                 
+                # Create unique key for destination+line
                 dest_key = f"{line_name}_{destination}"
                 
                 if dest_key not in seen_destinations:
@@ -650,6 +680,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                         'estimates': []
                     }
                 
+                # Only add if within 30 minutes
                 if minutes <= 30:
                     seen_destinations[dest_key]['estimates'].append({
                         'minutes': 'Arriving' if minutes <= 0 else str(minutes),
@@ -657,6 +688,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                         'currentLocation': current_location
                     })
             
+            # Sort estimates by time
             for dest in seen_destinations.values():
                 dest['estimates'].sort(key=lambda x: 999 if x['minutes'] == 'Arriving' else int(x['minutes']))
                 trains.append(dest)
@@ -694,6 +726,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
     def handle_tfl_status(self, parsed_path):
         """Handle TfL line status requests"""
         try:
+            # Fetch line status from TfL API
             status_url = f"{self.TFL_BASE_URL}/Line/Mode/tube/Status"
             
             ssl_context = ssl._create_unverified_context()
@@ -703,19 +736,21 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
             with urllib.request.urlopen(request, context=ssl_context, timeout=10) as response:
                 status_data = json.loads(response.read().decode())
             
+            # Process line statuses
             line_statuses = []
             for line in status_data:
                 line_id = line.get('id', '')
                 line_name = line.get('name', '')
                 line_statuses_list = line.get('lineStatuses', [])
                 
-                status_severity = 10
+                status_severity = 10  # Good service
                 status_reason = 'Good service'
                 
                 if line_statuses_list:
                     status_severity = line_statuses_list[0].get('statusSeverity', 10)
                     status_reason = line_statuses_list[0].get('statusSeverityDescription', 'Good service')
                     
+                    # Check for disruption reason
                     if 'reason' in line_statuses_list[0]:
                         status_reason = line_statuses_list[0]['reason']
                 
@@ -772,10 +807,11 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
         cache_key = f"{lat},{lon}"
         if cache_key in cls.weather_cache:
             cache_age = (datetime.now() - cls.weather_cache_time[cache_key]).total_seconds()
-            if cache_age < 600:
+            if cache_age < 600:  # 10 minutes
                 return cls.weather_cache[cache_key]
         
         try:
+            # Open-Meteo API
             weather_url = f"https://api.open-meteo.com/v1/forecast?latitude={lat}&longitude={lon}&current=temperature_2m,relative_humidity_2m,weather_code,wind_speed_10m,surface_pressure,visibility&temperature_unit=celsius&wind_speed_unit=kmh"
             
             ssl_context = ssl._create_unverified_context()
@@ -798,6 +834,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                 'pressure': int(current.get('surface_pressure', 1013))
             }
             
+            # Get AQI
             aqi_data = cls.get_real_aqi(lat, lon)
             weather_data.update(aqi_data)
             
@@ -891,7 +928,7 @@ class BARTProxyHandler(SimpleHTTPRequestHandler):
                     'abbreviation': arrival['abbreviation'],
                     'limited': '0',
                     'estimate': [],
-                    'weather': arrival['weather']
+                    'weather': arrival['weather']  # Add weather data
                 }
                 
                 for est in arrival['estimates']:
@@ -946,17 +983,23 @@ def run_server(port=8000):
     
     print(f"""
 ╔═══════════════════════════════════════════════════════════╗
-║  🚇 SmartCommute - Health-Aware Transit System           ║
+║  🚇 SmartCommute - Real Data from Multiple APIs!         ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Server: http://localhost:{port}                            ║
-║  Open:   smartcommute_health.html                         ║
+║  Open:   smartcommute_v2.html                             ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  ✓ BART: Real-time arrivals + weather                     ║
 ║  ✓ London Underground: Live TfL data + weather            ║
 ║  ✓ Weather: Open-Meteo API (23 cities)                    ║
-║  ✓ AQI: Real-time Air Quality monitoring                  ║
-║  ✓ Health Profile: Personalized warnings                  ║
-║  ✓ Google Sign-In: Secure authentication                  ║
+║  ✓ AQI: Open-Meteo Air Quality API                        ║
+║  ✓ Line Status: Real-time disruptions                     ║
+╠═══════════════════════════════════════════════════════════╣
+║  Endpoints:                                               ║
+║    /api/bart?station=SBRN                                 ║
+║    /api/tfl?station=940GZZLUKSX                           ║
+║    /api/tfl-status                                        ║
+║    /api/weather?city=London&days=7                        ║
+║    /api/reset                                             ║
 ╠═══════════════════════════════════════════════════════════╣
 ║  Press Ctrl+C to stop                                     ║
 ╚═══════════════════════════════════════════════════════════╝
